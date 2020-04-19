@@ -1,0 +1,319 @@
+#PLEASE READ THIS
+#This creates a /16 VPC in us-east1 (Virginia) region, with three subnets (two publics and one private), one
+#internet gateway with a route table allowing internet access to two subnets, three security groups and 5 
+#servers, whereas three windows and two linux. 
+
+#Please note that because it has some hardcoded information, this will only work, without adjustments to this 
+#template, if you are using us-east-1 as your AWS region. For any other region you will need to make 
+#adjustments.
+
+#Also, please note that in order to access the servers, you must create a key pair in advance, using the 
+#console and name it "MyLabKeyPair". 
+
+#Comments,questions,suggestions,criticisms are welcome. Please send them to vjpsouza@gmail.com
+
+#Also, I know there are ways of getting rid of hardcoded stuff. This is on the pipeline and it will be
+#part of future updates. Things such mappings to be region independent,etc. Thanks for being patient. :) 
+
+
+Resources:
+
+#This creates the /16 VPC (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ec2-vpc.html) 
+
+  VPC:
+    Type: 'AWS::EC2::VPC'
+    Properties: 
+      CidrBlock: 10.20.0.0/16
+      EnableDnsHostnames: 'true'
+      EnableDnsSupport: 'true'
+      InstanceTenancy: default
+      Tags: 
+        - Key: "Name"
+          Value: "VPC LAB us-east-1 Virginia 10.20.0.0/16"
+
+#This creates the first /24 subnet out of the three subnets included in this VPC (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ec2-subnet.html)
+
+  PublicSubnet01:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      CidrBlock: 10.20.1.0/24
+      AvailabilityZone: "us-east-1a"
+      MapPublicIpOnLaunch: 'true'
+      Tags:
+      - Key: Name
+        Value: MyPublicSubnet01Bastion
+
+ #This creates the second /24 subnet out of the three subnets included in this VPC (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ec2-subnet.html)
+
+  PublicSubnet02:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      CidrBlock: 10.20.2.0/24
+      AvailabilityZone: "us-east-1b"
+      MapPublicIpOnLaunch: 'true'
+      Tags:
+      - Key: Name
+        Value: MyPublicSubnet02WebServers
+
+#This creates the third /24 subnet out of the three subnets included in this VPC (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ec2-subnet.html)
+
+  PrivateSubnet01:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      CidrBlock: 10.20.3.0/24
+      AvailabilityZone: "us-east-1c"
+      MapPublicIpOnLaunch: 'false'
+      Tags:
+      - Key: Name
+        Value: MyPrivateSubnet01BackEnd  
+
+ #This creates the internet gateway dedicated to this new VPC (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ec2-internetgateway.html) 
+
+  myInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: MyInternetGatewayforPublicSubnet01and02
+
+#This attaches the internet gateway to the VPC (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ec2-vpc-gateway-attachment.html)
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId:
+        Ref: VPC
+      InternetGatewayId:
+        Ref: myInternetGateway  
+
+ #This creates a route table on the internet gateway dedicated to this VPC (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ec2-route-table.html)
+
+  myRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:  
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value: RouteTableforPublicSubnets01and02
+
+ #This adds a route to the internet in the route table dedicated to this VPC (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ec2-route.html)
+
+  myRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+       RouteTableId:
+         Ref: myRouteTable
+       DestinationCidrBlock: 0.0.0.0/0
+       GatewayId:
+         Ref: myInternetGateway    
+
+#This associates the two designated public subnets with the route table (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ec2-subnet-route-table-assoc.html)
+
+  SubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet01 
+      RouteTableId:
+        Ref: myRouteTable
+
+  SubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet02
+      RouteTableId:
+        Ref: myRouteTable   
+
+ #This creates three security groups and sets some ingress rules (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-ec2-security-group.html)
+
+  MyInternalSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow RDP and ICMP from bastion hosts
+      GroupName: MyInternalSG
+      VpcId:
+         Ref: VPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 3389
+        ToPort: 3389
+        CidrIp: 10.20.1.0/24
+
+      - IpProtocol: icmp
+        FromPort: -1
+        ToPort: -1
+        CidrIp: 10.20.1.0/24  
+
+      - IpProtocol: icmp
+        FromPort: -1
+        ToPort: -1
+        CidrIp: 10.20.2.0/24   
+             
+        
+  MyBastionSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow RDP and SSH from internet to bastion hosts
+      GroupName: MyBastionSG
+      VpcId:
+         Ref: VPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 3389
+        ToPort: 3389
+        CidrIp: 0.0.0.0/0
+
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: 0.0.0.0/0
+
+      - IpProtocol: icmp
+        FromPort: -1
+        ToPort: -1
+        CidrIp: 10.20.2.0/24
+
+      - IpProtocol: icmp
+        CidrIp: 10.20.3.0/24
+        FromPort: -1
+        ToPort: -1
+
+      
+  MyWebSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow RDP , SSH and ICMP from bastion hosts and internal subnet
+      GroupName: MyWebSG
+      VpcId:
+         Ref: VPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 3389
+        ToPort: 3389
+        CidrIp: 10.20.1.0/24
+
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: 10.20.1.0/24  
+
+      - IpProtocol: icmp
+        CidrIp: 10.20.1.0/24
+        FromPort: -1
+        ToPort: -1
+
+      - IpProtocol: icmp
+        CidrIp: 10.20.3.0/24
+        FromPort: -1
+        ToPort: -1 
+
+ #This creates my servers and also attaches the correspondent security group to them (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-ec2-instance.html)    
+           
+  Ec2Instance1:
+    Type: 'AWS::EC2::Instance'
+    Properties: 
+        InstanceType: t2.micro
+        ImageId: ami-0323c3dd2da7fb37d
+        KeyName: MyLabKeyPair
+        Tags:
+          - Key: “Name”
+            Value: !Join [ " ", [ Linux , Bastion 1 , ]] 
+        AvailabilityZone: "us-east-1a"
+        SubnetId: 
+          Ref: PublicSubnet01
+        SecurityGroupIds: 
+          - !GetAtt MyBastionSG.GroupId
+        UserData:
+          Fn::Base64:
+             <powershell>
+             Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
+             </powershell>  
+
+  Ec2Instance2:
+    Type: 'AWS::EC2::Instance'
+    Properties: 
+        InstanceType: t2.micro
+        ImageId: ami-0323c3dd2da7fb37d
+        KeyName: MyLabKeyPair
+        Tags:
+          - Key: “Name”
+            Value: !Join [ " ", [ Linux , WebServer 1 , ]] 
+        AvailabilityZone: "us-east-1b"
+        SubnetId: 
+           Ref: PublicSubnet02
+        SecurityGroupIds: 
+          - !GetAtt MyWebSG.GroupId   
+        UserData:
+          Fn::Base64:
+             <powershell>
+             Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
+             </powershell>  
+
+  Ec2Instance3:
+    Type: 'AWS::EC2::Instance'
+    Properties: 
+        InstanceType: t2.micro
+        ImageId: ami-09d496c26aa745869
+        KeyName: MyLabKeyPair
+        Tags:
+          - Key: “Name”
+            Value: !Join [ " ", [ Windows , Bastion 1 , ]] 
+        AvailabilityZone: "us-east-1a"    
+        SubnetId: 
+           Ref: PublicSubnet01  
+        SecurityGroupIds: 
+          - !GetAtt MyBastionSG.GroupId 
+        UserData:
+          Fn::Base64:
+             <powershell>
+             Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
+             </powershell>         
+   
+  Ec2Instance4:
+    Type: 'AWS::EC2::Instance'
+    Properties: 
+        InstanceType: t2.micro
+        ImageId: ami-09d496c26aa745869
+        KeyName: MyLabKeyPair
+        Tags:
+          - Key: “Name”
+            Value: !Join [ " ", [ Windows , WebServer 1 , ]] 
+        AvailabilityZone: "us-east-1b"    
+        SubnetId: 
+           Ref: PublicSubnet02 
+        SecurityGroupIds: 
+          - !GetAtt MyWebSG.GroupId 
+        UserData:
+          Fn::Base64:
+             <powershell>
+             Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
+             </powershell>    
+
+  Ec2Instance5:
+    Type: 'AWS::EC2::Instance'
+    Properties: 
+        InstanceType: t2.micro
+        ImageId: ami-09d496c26aa745869
+        KeyName: MyLabKeyPair
+        Tags:
+          - Key: “Name”
+            Value: !Join [ " ", [ Windows , BackEnd 1 , ]] 
+        AvailabilityZone: "us-east-1c"    
+        SubnetId: 
+           Ref: PrivateSubnet01 
+        SecurityGroupIds: 
+          - !GetAtt MyInternalSG.GroupId 
+        UserData:
+          Fn::Base64:
+             <powershell>
+             Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
+             </powershell>    
+
+#End of part 1. An enhanced version of this template is in the works right now.  :)         
